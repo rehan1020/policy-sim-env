@@ -1,3 +1,21 @@
+---
+title: Municipal Policy Simulation — OpenEnv
+emoji: 🌍
+colorFrom: green
+colorTo: blue
+sdk: docker
+app_port: 7860
+pinned: false
+license: apache-2.0
+tags:
+  - openenv
+  - reinforcement-learning
+  - policy-simulation
+  - governance
+  - real-world
+  - rl-environment
+---
+
 # 🌍 Municipal Policy Simulation — OpenEnv
 
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compatible-blue)](https://github.com/meta-pytorch/OpenEnv)
