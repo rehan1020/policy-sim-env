@@ -1,0 +1,146 @@
+name: policy-sim-env
+version: "1.0.0"
+description: >
+  An OpenEnv-compatible reinforcement learning environment where agents
+  learn to govern a simulated city (Verdania) by proposing policy
+  interventions, managing budget, and navigating stakeholder politics
+  across 8 turns. Tasks range from fixing a traffic crisis (easy) to
+  surviving a hostile lobbying gauntlet while improving all city KPIs (hard).
+
+author: openenv-hackathon
+tags:
+  - openenv
+  - policy-simulation
+  - governance
+  - multi-objective
+  - real-world
+  - rl
+
+license: apache-2.0
+
+environment:
+  type: http
+  base_url: http://localhost:7860
+  endpoints:
+    reset:    POST /reset
+    step:     POST /step
+    state:    GET  /state
+    tasks:    GET  /tasks
+    grader:   POST /grader
+    baseline: POST /baseline
+    health:   GET  /health
+
+action_space:
+  type: object
+  fields:
+    action_type:
+      type: string
+      enum: [propose_policy, investigate, pass_turn]
+    policy_type:
+      type: string
+      nullable: true
+      enum:
+        - expand_transit
+        - build_housing
+        - congestion_tax
+        - green_spaces
+        - subsidise_rent
+        - zoning_reform
+        - bike_lanes
+        - emissions_tax
+        - income_support
+        - parking_reform
+    district:
+      type: string
+      nullable: true
+      enum: [north, south, east, west, central]
+    budget_pct:
+      type: number
+      nullable: true
+      range: [0.05, 1.0]
+    stakeholder:
+      type: string
+      nullable: true
+      enum: [transit_union, property_owners, env_coalition, business_council]
+
+observation_space:
+  type: object
+  fields:
+    task_id: string
+    task_description: string
+    citywide_kpis: object        # traffic, housing, equality, air_quality, satisfaction (0-100)
+    district_kpis: object        # per-district KPI breakdown
+    composite_score: number      # weighted wellbeing score 0-100
+    budget_left: number          # 0.0-1.0
+    political_capital: number    # 0-100, episode ends at 0
+    stakeholder_approvals: object
+    turn: integer
+    turns_left: integer
+    last_action_type: string
+    last_policy_type: string
+    last_district: string
+    last_budget_spent: number
+    kpi_delta: object
+    stakeholder_reactions: object
+    capital_delta: number
+    warning: string
+    error_message: string
+    investigation_result: object
+    reward: number
+    cumulative_reward: number
+    done: boolean
+    done_reason: string
+
+tasks:
+  - id: task_1_decongest
+    title: "Decongest the City"
+    difficulty: easy
+    max_turns: 4
+    reward_range: [0.0, 1.0]
+    description: >
+      Traffic crisis in north, central, and west districts.
+      Goal: reduce citywide traffic by ≥4 pts within 4 turns, budget ≤65%.
+
+  - id: task_2_equity
+    title: "Equity Reform"
+    difficulty: medium
+    max_turns: 6
+    reward_range: [0.0, 1.0]
+    description: >
+      Low housing affordability, income equality, and satisfaction.
+      Goal: improve all three KPIs by ≥5 pts citywide average in 6 turns.
+
+  - id: task_3_gauntlet
+    title: "Political Gauntlet"
+    difficulty: hard
+    max_turns: 8
+    reward_range: [0.0, 1.0]
+    description: >
+      All KPIs at crisis, political capital at 50 (fragile).
+      Goal: composite score +30 pts over 8 turns without being recalled.
+
+reward:
+  type: shaped
+  description: >
+    -0.02 per step (efficiency), -0.05 pass_turn penalty,
+    -0.03 per stakeholder opposed, -0.30 recall penalty,
+    terminal reward = grader score 0.0–1.0
+  range: [-inf, 1.0]
+  terminal: true
+
+baseline:
+  agent: rule_based_greedy
+  scores:
+    task_1_decongest: 0.5
+    task_2_equity: 0.48
+    task_3_gauntlet: 0.42
+  mean: 0.467
+
+docker:
+  image: policy-sim-env
+  port: 7860
+  build_context: .
+
+huggingface:
+  space_url: https://huggingface.co/spaces/openenv/policy-sim-env
+  sdk: docker
