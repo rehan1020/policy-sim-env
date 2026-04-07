@@ -20,6 +20,7 @@ COPY environment.py  ./
 COPY tasks.py        ./
 COPY app.py          ./
 COPY baseline.py     ./
+COPY inference.py    ./
 COPY openenv.yaml    ./
 
 # Non-root user (required by HuggingFace Spaces)
@@ -32,4 +33,6 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
 
 EXPOSE 7860
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7860", "--workers", "1"]
+CMD uvicorn app:app --host 0.0.0.0 --port 7860 & \
+    sleep 3 && \
+    python inference.py

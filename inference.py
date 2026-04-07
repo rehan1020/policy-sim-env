@@ -1,100 +1,103 @@
-#!/usr/bin/env python3
-"""
-inference.py  ←  required by OpenEnv validator at repo root
-Alias for baseline.py — runs the baseline agent against all 3 tasks.
-
-Usage:
-    python inference.py
-    OPENAI_API_KEY=sk-... python inference.py
-    ENV_BASE_URL=https://your-space.hf.space python inference.py
-"""
 import os
-import sys
 import json
 import requests
+from openai import OpenAI
 
-ENV_BASE_URL  = os.environ.get("ENV_BASE_URL", "http://localhost:7860")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
+MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-# ── Baseline strategies (rule-based, no API key needed) ───────────────────────
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
-STRATEGIES = {
-    "task_1_decongest": [
-        ("expand_transit",  "north",   0.25),
-        ("congestion_tax",  "central", 0.20),
-        ("expand_transit",  "west",    0.25),
-        ("bike_lanes",      "central", 0.15),
-    ],
-    "task_2_equity": [
-        ("income_support",  "north",   0.30),
-        ("build_housing",   "east",    0.25),
-        ("subsidise_rent",  "west",    0.20),
-        ("income_support",  "central", 0.15),
-        ("build_housing",   "north",   0.10),
-    ],
-    "task_3_gauntlet": [
-        ("bike_lanes",      "central", 0.12),
-        ("green_spaces",    "west",    0.12),
-        ("expand_transit",  "north",   0.15),
-        ("income_support",  "north",   0.15),
-        ("build_housing",   "east",    0.15),
-        ("expand_transit",  "west",    0.12),
-        ("zoning_reform",   "south",   0.12),
-    ],
-}
+try:
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "hf_dummy_token")
+except Exception:
+    client = None
+
+TASKS = ["task_1_decongest", "task_2_equity", "task_3_gauntlet"]
+
+SYSTEM_PROMPT = """You are a city policy agent for Verdania. Choose the best action given the current city state.
+Respond ONLY with a valid JSON action object.
+Available action_types: propose_policy, investigate, pass_turn.
+Policy types: expand_transit, build_housing, congestion_tax, green_spaces,
+subsidise_rent, zoning_reform, bike_lanes, emissions_tax, income_support, parking_reform.
+Districts: north, south, east, west, central.
+budget_pct: float between 0.05 and 1.0."""
 
 
-def run(base_url: str) -> list:
-    results = []
+def _strip_code_fences(text: str) -> str:
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
 
-    for task_id, moves in STRATEGIES.items():
-        # Reset
-        r = requests.post(f"{base_url}/reset",
-                          json={"task_id": task_id, "seed": 42}, timeout=30)
-        r.raise_for_status()
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    if lines and lines[0].strip().lower() == "json":
+        lines = lines[1:]
+    return "\n".join(lines).strip()
 
-        done = False
-        final_info = {}
 
-        # Execute strategy
-        for policy_type, district, budget_pct in moves:
-            if done:
-                break
-            r = requests.post(f"{base_url}/step", json={
-                "action_type": "propose_policy",
-                "policy_type": policy_type,
-                "district":    district,
-                "budget_pct":  budget_pct,
-            }, timeout=30)
-            r.raise_for_status()
-            result = r.json()
-            done = result.get("done", False)
-            final_info = result.get("info", {})
+def get_llm_action(observation: dict) -> dict:
+    user_msg = (
+        f"Current city state: {json.dumps(observation, indent=2)}\n"
+        "Choose your action:"
+    )
 
-        # Fill remaining turns
-        while not done:
-            r = requests.post(f"{base_url}/step",
-                              json={"action_type": "pass_turn"}, timeout=30)
-            r.raise_for_status()
-            result = r.json()
-            done = result.get("done", False)
-            final_info = result.get("info", {})
+    try:
+        if client is None:
+            return {"action_type": "pass_turn"}
+        resp = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=200,
+            temperature=0.3,
+        )
+        text = (resp.choices[0].message.content or "").strip()
+        return json.loads(_strip_code_fences(text))
+    except Exception:
+        return {"action_type": "pass_turn"}
 
-        score = final_info.get("grader_score", 0.0)
-        results.append({"task_id": task_id, "score": round(score, 4)})
-        print(f"  {task_id}: {score:.4f}")
 
-    return results
+def run_task(task_id: str) -> None:
+    print(f"[START] task={task_id}", flush=True)
+
+    obs = requests.post(
+        f"{ENV_BASE_URL}/reset",
+        json={"task_id": task_id, "seed": 42},
+        timeout=30,
+    ).json()
+
+    step_num = 0
+    done = False
+
+    while not done:
+        action = get_llm_action(obs)
+        result = requests.post(f"{ENV_BASE_URL}/step", json=action, timeout=30).json()
+        step_num += 1
+
+        reward = float(result.get("reward", 0.0))
+        obs = result.get("observation", {})
+        done = bool(obs.get("done", False))
+
+        print(f"[STEP] step={step_num} reward={reward:.4f}", flush=True)
+
+    grader = requests.post(
+        f"{ENV_BASE_URL}/grader",
+        json={"task_id": task_id},
+        timeout=30,
+    ).json()
+    score = float(grader.get("score", 0.0))
+
+    print(f"[END] task={task_id} score={score:.4f} steps={step_num}", flush=True)
 
 
 if __name__ == "__main__":
-    print(f"\n{'='*50}")
-    print("  OpenEnv Inference Script — Policy Sim")
-    print(f"  Environment: {ENV_BASE_URL}")
-    print(f"{'='*50}\n")
-
-    results = run(ENV_BASE_URL)
-
-    mean = sum(r["score"] for r in results) / len(results)
-    print(f"\n  Mean score: {mean:.4f}")
-    print(json.dumps({"results": results, "mean_score": mean}, indent=2))
+    for task in TASKS:
+        run_task(task)
