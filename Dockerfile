@@ -15,12 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code
 COPY core/           ./core/
-COPY models.py       ./
-COPY environment.py  ./
-COPY tasks.py        ./
-COPY app.py          ./
-COPY baseline.py     ./
-COPY inference.py    ./
+COPY *.py            ./
 COPY openenv.yaml    ./
 
 # Non-root user (required by HuggingFace Spaces)
