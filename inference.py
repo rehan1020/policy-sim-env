@@ -3,17 +3,17 @@ import json
 import requests
 from openai import OpenAI
 
-API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
-MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
-HF_TOKEN = os.getenv("HF_TOKEN")
+API_BASE_URL = os.environ["API_BASE_URL"]
+MODEL_NAME = os.environ.get("MODEL_NAME", "<your-active-model>")
+API_KEY = os.environ["API_KEY"]
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
-try:
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "hf_dummy_token")
-except Exception:
-    client = None
+client = OpenAI(
+    base_url=API_BASE_URL,
+    api_key=API_KEY,
+)
 
 TASKS = ["task_1_decongest", "task_2_equity", "task_3_gauntlet"]
 
