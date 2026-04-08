@@ -249,25 +249,16 @@ def _strict_open_unit(value: float, eps: float = 0.001) -> float:
 
 
 def _log_start(task_id: str) -> None:
-    print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+    print(f"[START] task={task_id}", flush=True)
 
 
-def _log_step(step_num: int, action_str: str, reward: float, done: bool, error: str | None) -> None:
-    done_val = str(bool(done)).lower()
-    error_val = error if error else "null"
-    reward_val = _clamp_unit(reward)
-    print(
-        f"[STEP] step={step_num} action={action_str} reward={reward_val:.2f} done={done_val} error={error_val}",
-        flush=True,
-    )
+def _log_step(step_num: int, reward: float) -> None:
+    print(f"[STEP] step={step_num} reward={reward:.4f}", flush=True)
 
 
-def _log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
-    rewards_str = ",".join(f"{_clamp_unit(r):.2f}" for r in rewards)
-    print(
-        f"[END] success={str(bool(success)).lower()} steps={steps} score={_strict_open_unit(score):.3f} rewards={rewards_str}",
-        flush=True,
-    )
+def _log_end(task_id: str, score: float, steps: int) -> None:
+    print(f"[END] task={task_id} score={score:.4f} steps={steps}",
+          flush=True)
 
 
 def run_task(task_id: str) -> None:
@@ -296,7 +287,6 @@ def run_task(task_id: str) -> None:
 
         while not done and step_num < MAX_STEPS:
             action = get_action(obs, task_id, step_num + 1)
-            action_str = _format_action(action)
             reward = 0.0
 
             try:
@@ -318,7 +308,7 @@ def run_task(task_id: str) -> None:
 
             step_num += 1
             rewards.append(reward)
-            _log_step(step_num, action_str, reward, done, last_error)
+            _log_step(step_num, reward)
 
         try:
             grader_resp = req.post(
@@ -335,7 +325,7 @@ def run_task(task_id: str) -> None:
         success = last_error is None and 0.0 <= score <= 1.0
 
     finally:
-        _log_end(success, step_num, score, rewards)
+        _log_end(task_id, _strict_open_unit(score), step_num)
 
 if __name__ == "__main__":
     wait_for_server(ENV_BASE_URL)
