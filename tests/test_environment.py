@@ -57,7 +57,7 @@ class TestTask1Grader(unittest.TestCase):
     def test_perfect_score_big_reduction_on_budget(self):
         state = self._city_reduced(reduction=5.0, budget_used=0.60)
         score = _grade_task1(state)
-        self.assertEqual(score, 1.0)
+        self.assertEqual(score, 0.999)
 
     def test_score_0_8_big_reduction_over_budget(self):
         state = self._city_reduced(reduction=5.0, budget_used=0.80)
@@ -77,7 +77,7 @@ class TestTask1Grader(unittest.TestCase):
     def test_score_0_for_no_improvement(self):
         state = _task1_city()   # no reduction applied
         score = _grade_task1(state)
-        self.assertEqual(score, 0.0)
+        self.assertEqual(score, 0.001)
 
     def test_score_in_range(self):
         for reduction in [0, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0]:
@@ -92,7 +92,7 @@ class TestTask2Grader(unittest.TestCase):
     def test_zero_for_no_improvement(self):
         state = _task2_city()   # starting values
         score = _grade_task2(state)
-        self.assertAlmostEqual(score, 0.0, places=3)
+        self.assertAlmostEqual(score, 0.001, places=3)
 
     def test_partial_for_partial_improvement(self):
         state = _task2_city()

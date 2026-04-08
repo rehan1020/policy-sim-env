@@ -25,6 +25,14 @@ from core.city_model import (
 from core.stakeholders import StakeholderEngine
 
 
+def _clamp_score(score: float) -> float:
+    """
+    Ensure score is strictly within (0, 1) exclusive.
+    The hackathon validator rejects exactly 0.0 or exactly 1.0.
+    """
+    return max(0.001, min(0.999, float(score)))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Helper: build a CityState from per-district overrides
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,13 +118,13 @@ def _grade_task1(final_state: CityState) -> float:
     budget_used = 1.0 - final_state.budget_left
 
     if reduction >= 4.0:
-        return 1.0 if budget_used <= 0.65 else 0.8
+        return _clamp_score(1.0 if budget_used <= 0.65 else 0.8)
     elif reduction >= 2.0:
-        return 0.5
+        return _clamp_score(0.5)
     elif reduction >= 0.8:
-        return 0.2
+        return _clamp_score(0.2)
     else:
-        return 0.0
+        return _clamp_score(0.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -167,7 +175,7 @@ def _grade_task2(final_state: CityState) -> float:
     all_hit = all(s >= 1.0 for s in scores)
     bonus = 0.1 if (all_hit and final_state.budget_left > 0.2) else 0.0
 
-    return round(min(base + bonus, 1.0), 4)
+    return _clamp_score(round(min(base + bonus, 1.0), 4))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -217,7 +225,7 @@ def _grade_task3(final_state: CityState) -> float:
     capital_frac   = final_state.political_capital / 100.0
 
     score = 0.50 * kpi_component + 0.30 * survived + 0.20 * capital_frac
-    return round(min(score, 1.0), 4)
+    return _clamp_score(round(min(score, 1.0), 4))
 
 def _task3_start_composite() -> float:
     """Compute starting composite for the task3 city."""
