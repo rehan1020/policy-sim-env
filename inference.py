@@ -228,7 +228,11 @@ def _clamp_unit(value: float) -> float:
         value = float(value)
     except Exception:
         return 0.0
-    return max(0.0, min(1.0, value))
+    # Keep native unit values unchanged; otherwise normalize shaped rewards
+    # (typically around [-1, 1]) into [0, 1] for validator-facing logs.
+    if 0.0 <= value <= 1.0:
+        return value
+    return max(0.0, min(1.0, (value + 1.0) / 2.0))
 
 
 def _log_start(task_id: str) -> None:
