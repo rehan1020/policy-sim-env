@@ -4,6 +4,9 @@ import time
 import requests as req
 from openai import OpenAI
 
+DEPRECATED_HF_HOST = "api-inference.huggingface.co"
+ROUTER_HF_HOST = "router.huggingface.co"
+
 # Mandatory environment configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
 MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
@@ -19,7 +22,14 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 BENCHMARK = os.getenv("OPENENV_BENCHMARK", "policy-sim-env")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "10"))
 
+
+def _normalize_api_base_url(url: str) -> str:
+    if DEPRECATED_HF_HOST in url:
+        return url.replace(DEPRECATED_HF_HOST, ROUTER_HF_HOST)
+    return url
+
 # OpenAI-compatible client for all LLM calls
+API_BASE_URL = _normalize_api_base_url(API_BASE_URL)
 client = OpenAI(
     base_url=API_BASE_URL,
     api_key=API_KEY or "placeholder",
@@ -144,35 +154,55 @@ def _normalize_action(action: dict) -> dict:
     return {"action_type": "pass_turn"}
 
 
+def _llm_response_text(active_client: OpenAI, observation: dict) -> str:
+    resp = active_client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": (
+                f"Current city state:\n"
+                f"{json.dumps(observation, indent=2)}\n\n"
+                f"What is your next action? Reply with JSON only."
+            )},
+        ],
+        max_tokens=150,
+        temperature=0.3,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
 def get_llm_action(observation: dict) -> dict:
     try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": (
-                    f"Current city state:\n"
-                    f"{json.dumps(observation, indent=2)}\n\n"
-                    f"What is your next action? Reply with JSON only."
-                )},
-            ],
-            max_tokens=150,
-            temperature=0.3,
+        text = _llm_response_text(client, observation)
+
+    except Exception as exc:
+        message = str(exc)
+        should_retry_with_router = (
+            DEPRECATED_HF_HOST in API_BASE_URL
+            and ("Error code: 410" in message or "no longer supported" in message)
         )
-        text = (resp.choices[0].message.content or "").strip()
+        if not should_retry_with_router:
+            return {"action_type": "pass_turn"}
 
-        if "```" in text:
-            parts = text.split("```")
-            for part in parts:
-                part = part.strip()
-                if part.startswith("json"):
-                    part = part[4:].strip()
-                if part.startswith("{"):
-                    text = part
-                    break
+        retry_base_url = API_BASE_URL.replace(DEPRECATED_HF_HOST, ROUTER_HF_HOST)
+        retry_client = OpenAI(base_url=retry_base_url, api_key=API_KEY or "placeholder")
+        try:
+            text = _llm_response_text(retry_client, observation)
+        except Exception:
+            return {"action_type": "pass_turn"}
 
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            if part.startswith("json"):
+                part = part[4:].strip()
+            if part.startswith("{"):
+                text = part
+                break
+
+    try:
         return _normalize_action(json.loads(text.strip()))
-
     except Exception:
         return {"action_type": "pass_turn"}
 
