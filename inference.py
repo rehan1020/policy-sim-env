@@ -4,34 +4,29 @@ import time
 import requests as req
 from openai import OpenAI
 
-# -- Env vars -- hackathon validator injects these at evaluation time --
-API_BASE_URL = os.getenv("API_BASE_URL",
-                         "https://api-inference.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME",
-                       "mistralai/Mistral-7B-Instruct-v0.3")
-HF_TOKEN = os.getenv("HF_TOKEN")          # no default -- required
-LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")  # optional
+# Mandatory environment configuration
+API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
+MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
+HF_TOKEN = os.getenv("HF_TOKEN")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-# Validator injects API_KEY for LiteLLM proxy.
-# Locally / on HF Space we fall back to HF_TOKEN.
-API_KEY = os.environ.get("API_KEY") or HF_TOKEN
-
-# Decide whether to use LLM or rule-based fallback
+# LiteLLM key can be injected as API_KEY by validator; HF_TOKEN remains mandatory in docs.
+API_KEY = os.getenv("API_KEY") or HF_TOKEN
 USE_LLM = bool(API_KEY)
 
-# -- Policy simulation environment -----------------------------------
+# Environment runtime configuration
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+BENCHMARK = os.getenv("OPENENV_BENCHMARK", "policy-sim-env")
+MAX_STEPS = int(os.getenv("MAX_STEPS", "10"))
 
-# -- OpenAI-compatible client (HF Inference API or LiteLLM proxy) ----
+# OpenAI-compatible client for all LLM calls
 client = OpenAI(
     base_url=API_BASE_URL,
-    api_key=API_KEY or "placeholder",   # placeholder stops OpenAI() crashing
+    api_key=API_KEY or "placeholder",
 )
 
-# -- Tasks ------------------------------------------------------------
 TASKS = ["task_1_decongest", "task_2_equity", "task_3_gauntlet"]
 
-# -- System prompt ----------------------------------------------------
 SYSTEM_PROMPT = """You are a city policy agent governing Verdania.
 Choose the best action for the current city state.
 Respond ONLY with a valid JSON object -- no markdown, no explanation.
@@ -55,7 +50,7 @@ Strategy hints:
                       capital, then push bigger reforms
 """
 
-# -- Rule-based fallback actions per task ----------------------------
+# Deterministic fallback actions for no-key local testing
 FALLBACK_ACTIONS = {
     "task_1_decongest": [
         {"action_type": "propose_policy", "policy_type": "expand_transit",
@@ -102,29 +97,54 @@ FALLBACK_ACTIONS = {
 }
 
 
-def wait_for_server(url: str, retries: int = 30, delay: int = 2) -> None:
-    """Wait until the environment server is healthy before doing anything."""
-    print(f"Waiting for environment server at {url} ...", flush=True)
-    for i in range(retries):
+def wait_for_server(url: str, retries: int = 30, delay: int = 2) -> bool:
+    for _ in range(retries):
         try:
             r = req.get(f"{url}/health", timeout=3)
             if r.status_code == 200:
-                print("Environment server is ready.", flush=True)
-                return
+                return True
         except Exception:
             pass
         time.sleep(delay)
-    raise RuntimeError(
-        f"Environment server at {url} never became healthy "
-        f"after {retries * delay} seconds"
-    )
+    return False
+
+
+def _normalize_action(action: dict) -> dict:
+    if not isinstance(action, dict):
+        return {"action_type": "pass_turn"}
+
+    action_type = action.get("action_type", "pass_turn")
+    if action_type not in {"propose_policy", "investigate", "pass_turn"}:
+        return {"action_type": "pass_turn"}
+
+    if action_type == "propose_policy":
+        policy_type = action.get("policy_type")
+        district = action.get("district")
+        budget_pct = action.get("budget_pct", 0.2)
+        try:
+            budget_pct = float(budget_pct)
+        except Exception:
+            budget_pct = 0.2
+        budget_pct = max(0.05, min(1.0, budget_pct))
+        if not policy_type or not district:
+            return {"action_type": "pass_turn"}
+        return {
+            "action_type": "propose_policy",
+            "policy_type": policy_type,
+            "district": district,
+            "budget_pct": budget_pct,
+        }
+
+    if action_type == "investigate":
+        stakeholder = action.get("stakeholder")
+        if not stakeholder:
+            return {"action_type": "pass_turn"}
+        return {"action_type": "investigate", "stakeholder": stakeholder}
+
+    return {"action_type": "pass_turn"}
 
 
 def get_llm_action(observation: dict) -> dict:
-    """
-    Ask the LLM (via HF Inference API or LiteLLM proxy) for the next action.
-    Returns a valid action dict. Falls back to pass_turn on any error.
-    """
     try:
         resp = client.chat.completions.create(
             model=MODEL_NAME,
@@ -139,9 +159,8 @@ def get_llm_action(observation: dict) -> dict:
             max_tokens=150,
             temperature=0.3,
         )
-        text = resp.choices[0].message.content.strip()
+        text = (resp.choices[0].message.content or "").strip()
 
-        # Strip markdown code fences if model wraps in ```json ... ```
         if "```" in text:
             parts = text.split("```")
             for part in parts:
@@ -152,96 +171,115 @@ def get_llm_action(observation: dict) -> dict:
                     text = part
                     break
 
-        return json.loads(text.strip())
+        return _normalize_action(json.loads(text.strip()))
 
-    except Exception as e:
-        print(f"LLM call failed: {e} -- using pass_turn fallback", flush=True)
+    except Exception:
         return {"action_type": "pass_turn"}
 
 
 def get_action(observation: dict, task_id: str, step_num: int) -> dict:
-    """
-    Return the next action.
-    If USE_LLM is True  -> ask the LLM via the proxy.
-    If USE_LLM is False -> use deterministic rule-based fallback.
-    """
     if USE_LLM:
         return get_llm_action(observation)
 
-    # Rule-based fallback -- cycle through the preset action list
     fallback = FALLBACK_ACTIONS.get(task_id, [])
     if fallback:
         index = (step_num - 1) % len(fallback)
-        return fallback[index]
+        return _normalize_action(fallback[index])
 
     return {"action_type": "pass_turn"}
 
 
+def _format_action(action: dict) -> str:
+    return json.dumps(action, separators=(",", ":"), ensure_ascii=True)
+
+
+def _log_start(task_id: str) -> None:
+    print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+
+
+def _log_step(step_num: int, action_str: str, reward: float, done: bool, error: str | None) -> None:
+    done_val = str(bool(done)).lower()
+    error_val = error if error else "null"
+    print(
+        f"[STEP] step={step_num} action={action_str} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
+    )
+
+
+def _log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(bool(success)).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
+
+
 def run_task(task_id: str) -> None:
-    """
-    Run one full task episode and emit the required structured stdout logs.
-
-    Output format (validator requires this exactly):
-        [START] task=<task_id>
-        [STEP] step=<N> reward=<float>
-        [END] task=<task_id> score=<float> steps=<N>
-    """
-    print(f"[START] task={task_id}", flush=True)
-
-    # Reset the environment
-    try:
-        reset_resp = req.post(
-            f"{ENV_BASE_URL}/reset",
-            json={"task_id": task_id, "seed": 42},
-            timeout=30,
-        )
-        obs = reset_resp.json()
-    except Exception as e:
-        print(f"Reset failed for {task_id}: {e}", flush=True)
-        print(f"[STEP] step=1 reward=0.0000", flush=True)
-        print(f"[END] task={task_id} score=0.0000 steps=1", flush=True)
-        return
+    _log_start(task_id)
 
     step_num = 0
     done = False
-    MAX_STEPS = 10  # safety cap -- tasks have at most 8 turns
+    score = 0.0
+    rewards: list[float] = []
+    success = False
+    last_error: str | None = None
+    obs: dict = {}
 
-    while not done and step_num < MAX_STEPS:
-        action = get_action(obs, task_id, step_num + 1)
-
+    try:
         try:
-            step_resp = req.post(
-                f"{ENV_BASE_URL}/step",
-                json=action,
+            reset_resp = req.post(
+                f"{ENV_BASE_URL}/reset",
+                json={"task_id": task_id, "seed": 42},
                 timeout=30,
             )
-            result = step_resp.json()
-        except Exception as e:
-            print(f"Step failed: {e} -- stopping episode", flush=True)
-            break
+            reset_resp.raise_for_status()
+            obs = reset_resp.json()
+        except Exception as exc:
+            last_error = str(exc)
+            done = True
 
-        step_num += 1
-        reward = result.get("reward", 0.0)
-        obs = result.get("observation", {})
-        done = obs.get("done", False)
+        while not done and step_num < MAX_STEPS:
+            action = get_action(obs, task_id, step_num + 1)
+            action_str = _format_action(action)
+            reward = 0.0
 
-        print(f"[STEP] step={step_num} reward={reward:.4f}", flush=True)
+            try:
+                step_resp = req.post(
+                    f"{ENV_BASE_URL}/step",
+                    json=action,
+                    timeout=30,
+                )
+                step_resp.raise_for_status()
+                result = step_resp.json()
+                reward = float(result.get("reward", 0.0) or 0.0)
+                obs = result.get("observation", {})
+                done = bool(result.get("done", obs.get("done", False)))
+                err_field = obs.get("error_message")
+                last_error = err_field if err_field else None
+            except Exception as exc:
+                done = True
+                last_error = str(exc)
 
-    # Get the grader score for this episode
-    try:
-        grader_resp = req.post(
-            f"{ENV_BASE_URL}/grader",
-            json={"task_id": task_id},
-            timeout=30,
-        )
-        score = grader_resp.json().get("score", 0.0)
-    except Exception as e:
-        print(f"Grader failed: {e}", flush=True)
-        score = 0.0
+            step_num += 1
+            rewards.append(reward)
+            _log_step(step_num, action_str, reward, done, last_error)
 
-    print(f"[END] task={task_id} score={score:.4f} steps={step_num}",
-          flush=True)
+        try:
+            grader_resp = req.post(
+                f"{ENV_BASE_URL}/grader",
+                json={"task_id": task_id},
+                timeout=30,
+            )
+            grader_resp.raise_for_status()
+            score = float(grader_resp.json().get("score", 0.0) or 0.0)
+        except Exception:
+            score = 0.0
 
+        score = min(max(score, 0.0), 1.0)
+        success = last_error is None and 0.0 <= score <= 1.0
+
+    finally:
+        _log_end(success, step_num, score, rewards)
 
 if __name__ == "__main__":
     wait_for_server(ENV_BASE_URL)
