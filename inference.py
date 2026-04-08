@@ -235,6 +235,15 @@ def _clamp_unit(value: float) -> float:
     return max(0.0, min(1.0, (value + 1.0) / 2.0))
 
 
+def _strict_open_unit(value: float, eps: float = 0.001) -> float:
+    value = _clamp_unit(value)
+    if value <= 0.0:
+        return eps
+    if value >= 1.0:
+        return 1.0 - eps
+    return value
+
+
 def _log_start(task_id: str) -> None:
     print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
 
@@ -252,7 +261,7 @@ def _log_step(step_num: int, action_str: str, reward: float, done: bool, error: 
 def _log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
     rewards_str = ",".join(f"{_clamp_unit(r):.2f}" for r in rewards)
     print(
-        f"[END] success={str(bool(success)).lower()} steps={steps} score={_clamp_unit(score):.3f} rewards={rewards_str}",
+        f"[END] success={str(bool(success)).lower()} steps={steps} score={_strict_open_unit(score):.3f} rewards={rewards_str}",
         flush=True,
     )
 

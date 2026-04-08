@@ -46,6 +46,20 @@ BUDGET_OVERRUN_SCALE  =  0.10   # -0.10 per 10% over budget (not used; budget ca
 
 # KPI delta → reward scaling: total weighted delta / 100
 KPI_REWARD_SCALE      = 1.0 / 100.0
+SCORE_EPSILON         = 0.0001
+
+
+def _strict_open_unit(score: float, eps: float = SCORE_EPSILON) -> float:
+    """Clamp score into the strict open interval (0, 1)."""
+    try:
+        score = float(score)
+    except Exception:
+        score = 0.0
+    if score <= 0.0:
+        return eps
+    if score >= 1.0:
+        return 1.0 - eps
+    return score
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -162,7 +176,7 @@ class PolicyEnvironment:
         elif self._city.is_terminal():
             self._done = True
             self._done_reason = "max_turns"
-            grader_score = self._task.grader(self._city)
+            grader_score = _strict_open_unit(self._task.grader(self._city))
             info["grader_score"] = grader_score
             info["event"] = "episode_end"
 
@@ -362,4 +376,4 @@ class PolicyEnvironment:
         """Grade the current city state for the active task."""
         if self._task is None or self._city is None:
             raise RuntimeError("No active episode.")
-        return self._task.grader(self._city)
+        return _strict_open_unit(self._task.grader(self._city))

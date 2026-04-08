@@ -34,6 +34,19 @@ from core.city_model import DISTRICT_NAMES
 from core.stakeholders import STAKEHOLDER_NAMES
 
 
+def _strict_open_unit(score: float, eps: float = 0.0001) -> float:
+  """Clamp score into the strict open interval (0, 1)."""
+  try:
+    score = float(score)
+  except Exception:
+    score = 0.0
+  if score <= 0.0:
+    return eps
+  if score >= 1.0:
+    return 1.0 - eps
+  return score
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  App
 # ─────────────────────────────────────────────────────────────────────────────
@@ -208,11 +221,11 @@ def grader(req: GraderRequest):
             dkpi = DistrictKPIs(**{k: req.citywide_kpis.get(k, 50.0) for k in
                                    ["traffic","housing","equality","air_quality","satisfaction"]})
             tmp.kpis[name] = dkpi
-        score = TASKS[req.task_id].grader(tmp)
+        score = _strict_open_unit(TASKS[req.task_id].grader(tmp))
     else:
         if _env._city is None:
             raise HTTPException(status_code=400, detail="No active episode — call /reset first.")
-        score = _env.grade_current()
+        score = _strict_open_unit(_env.grade_current())
 
     return {
         "task_id": req.task_id,
