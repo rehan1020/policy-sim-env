@@ -241,6 +241,10 @@ def _strict_open_unit(value: float, eps: float = 0.001) -> float:
         return eps
     if value >= 1.0:
         return 1.0 - eps
+    if value < eps:
+        return eps
+    if value > 1.0 - eps:
+        return 1.0 - eps
     return value
 
 

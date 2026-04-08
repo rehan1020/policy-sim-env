@@ -46,7 +46,7 @@ BUDGET_OVERRUN_SCALE  =  0.10   # -0.10 per 10% over budget (not used; budget ca
 
 # KPI delta → reward scaling: total weighted delta / 100
 KPI_REWARD_SCALE      = 1.0 / 100.0
-SCORE_EPSILON         = 0.0001
+SCORE_EPSILON         = 0.001
 
 
 def _strict_open_unit(score: float, eps: float = SCORE_EPSILON) -> float:
@@ -58,6 +58,10 @@ def _strict_open_unit(score: float, eps: float = SCORE_EPSILON) -> float:
     if score <= 0.0:
         return eps
     if score >= 1.0:
+        return 1.0 - eps
+    if score < eps:
+        return eps
+    if score > 1.0 - eps:
         return 1.0 - eps
     return score
 

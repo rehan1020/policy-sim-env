@@ -34,7 +34,7 @@ from core.city_model import DISTRICT_NAMES
 from core.stakeholders import STAKEHOLDER_NAMES
 
 
-def _strict_open_unit(score: float, eps: float = 0.0001) -> float:
+def _strict_open_unit(score: float, eps: float = 0.001) -> float:
   """Clamp score into the strict open interval (0, 1)."""
   try:
     score = float(score)
@@ -43,6 +43,10 @@ def _strict_open_unit(score: float, eps: float = 0.0001) -> float:
   if score <= 0.0:
     return eps
   if score >= 1.0:
+    return 1.0 - eps
+  if score < eps:
+    return eps
+  if score > 1.0 - eps:
     return 1.0 - eps
   return score
 
