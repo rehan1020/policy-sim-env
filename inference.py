@@ -223,6 +223,14 @@ def _format_action(action: dict) -> str:
     return json.dumps(action, separators=(",", ":"), ensure_ascii=True)
 
 
+def _clamp_unit(value: float) -> float:
+    try:
+        value = float(value)
+    except Exception:
+        return 0.0
+    return max(0.0, min(1.0, value))
+
+
 def _log_start(task_id: str) -> None:
     print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
 
@@ -230,16 +238,17 @@ def _log_start(task_id: str) -> None:
 def _log_step(step_num: int, action_str: str, reward: float, done: bool, error: str | None) -> None:
     done_val = str(bool(done)).lower()
     error_val = error if error else "null"
+    reward_val = _clamp_unit(reward)
     print(
-        f"[STEP] step={step_num} action={action_str} reward={reward:.2f} done={done_val} error={error_val}",
+        f"[STEP] step={step_num} action={action_str} reward={reward_val:.2f} done={done_val} error={error_val}",
         flush=True,
     )
 
 
 def _log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    rewards_str = ",".join(f"{_clamp_unit(r):.2f}" for r in rewards)
     print(
-        f"[END] success={str(bool(success)).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(bool(success)).lower()} steps={steps} score={_clamp_unit(score):.3f} rewards={rewards_str}",
         flush=True,
     )
 
