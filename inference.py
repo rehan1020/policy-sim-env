@@ -4,51 +4,31 @@ import time
 import requests as req
 from openai import OpenAI
 
-# ── Required environment variables ───────────────────────────
-API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME   = os.getenv("MODEL_NAME",   "gpt-4.1-mini")
-HF_TOKEN     = os.getenv("HF_TOKEN")
-
-# Validator may inject API_KEY for LiteLLM proxy — use it if present
-API_KEY = os.environ.get("API_KEY") or HF_TOKEN
-if HF_TOKEN is None:
-    USE_LLM = False
-else:
-    USE_LLM = True
-
+API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
+MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
+HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
-ENV_BASE_URL     = os.getenv("ENV_BASE_URL", "http://localhost:7860")
-BENCHMARK        = os.getenv("OPENENV_BENCHMARK", "policy-sim-env")
-MAX_STEPS        = int(os.getenv("MAX_STEPS", "14"))
-TASK_ID          = os.getenv("TASK_ID")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+MAX_STEPS = int(os.getenv("MAX_STEPS", "14"))
+TASK_ID = os.getenv("TASK_ID")
 
-# ── OpenAI-compatible client ──────────────────────────────────
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY) if USE_LLM else None
+client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "hf_dummy_token")
+
+USE_LLM = (
+    bool(HF_TOKEN)
+    and API_BASE_URL != "<your-active-endpoint>"
+    and MODEL_NAME != "<your-active-model>"
+)
 
 TASKS = ["task_1_decongest", "task_2_equity", "task_3_gauntlet"]
 
-SYSTEM_PROMPT = """You are a city policy agent governing Verdania.
-Choose the best action for the current city state.
-Respond ONLY with a valid JSON object -- no markdown, no explanation.
-
-Action formats:
-  {"action_type": "propose_policy", "policy_type": "<type>", "district": "<district>", "budget_pct": <0.05-1.0>}
-  {"action_type": "investigate", "stakeholder": "<stakeholder>"}
-  {"action_type": "pass_turn"}
-
+SYSTEM_PROMPT = """You are a city policy agent for Verdania. Choose the best action given the current city state.
+Respond ONLY with a valid JSON action object.
+Available action_types: propose_policy, investigate, pass_turn.
 Policy types: expand_transit, build_housing, congestion_tax, green_spaces,
-  subsidise_rent, zoning_reform, bike_lanes, emissions_tax, income_support,
-  parking_reform
-Districts: north, south, east, west, central
-Stakeholders: transit_union, property_owners, environmental_coalition,
-  chamber_of_commerce
-
-Strategy hints:
-  task_1_decongest  -> use expand_transit (north/west) + congestion_tax (central)
-  task_2_equity     -> use income_support + build_housing + subsidise_rent
-  task_3_gauntlet   -> start with bike_lanes/green_spaces to build political
-                      capital, then push bigger reforms
-"""
+subsidise_rent, zoning_reform, bike_lanes, emissions_tax, income_support, parking_reform.
+Districts: north, south, east, west, central.
+budget_pct: float between 0.05 and 1.0."""
 
 # Deterministic fallback actions for no-key local testing
 FALLBACK_ACTIONS = {
@@ -107,6 +87,21 @@ def wait_for_server(url: str, retries: int = 30, delay: int = 2) -> bool:
             pass
         time.sleep(delay)
     return False
+
+
+def _strip_code_fences(text: str) -> str:
+    text = text.strip()
+    if not text.startswith("```"):
+        return text
+
+    lines = text.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].startswith("```"):
+        lines = lines[:-1]
+    if lines and lines[0].strip().lower() == "json":
+        lines = lines[1:]
+    return "\n".join(lines).strip()
 
 
 def _normalize_action(action: dict) -> dict:
@@ -170,18 +165,8 @@ def get_llm_action(observation: dict) -> dict:
     except Exception:
         return {"action_type": "pass_turn"}
 
-    if "```" in text:
-        parts = text.split("```")
-        for part in parts:
-            part = part.strip()
-            if part.startswith("json"):
-                part = part[4:].strip()
-            if part.startswith("{"):
-                text = part
-                break
-
     try:
-        return _normalize_action(json.loads(text.strip()))
+        return _normalize_action(json.loads(_strip_code_fences(text)))
     except Exception:
         return {"action_type": "pass_turn"}
 
@@ -201,28 +186,16 @@ def get_action(observation: dict, task_id: str, step_num: int) -> dict:
     return {"action_type": "pass_turn"}
 
 
-def _format_action(action: dict) -> str:
-    return json.dumps(action, separators=(",", ":"), ensure_ascii=True)
-
-
 def _log_start(task_id: str) -> None:
-    print(f"[START] task={task_id} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+    print(f"[START] task={task_id}", flush=True)
 
 
-def _log_step(step_num: int, action_str: str, reward_val: float, done_val: bool, error_val: str | None) -> None:
-    print(
-        f"[STEP] step={step_num} action={action_str} reward={reward_val:.2f} "
-        f"done={str(bool(done_val)).lower()} error={error_val if error_val else 'null'}",
-        flush=True,
-    )
+def _log_step(step_num: int, reward_val: float) -> None:
+    print(f"[STEP] step={step_num} reward={reward_val:.4f}", flush=True)
 
 
-def _log_end(success: bool, steps: int, rewards: list[float]) -> None:
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards) if rewards else "0.00"
-    print(
-        f"[END] success={str(bool(success)).lower()} steps={steps} rewards={rewards_str}",
-        flush=True,
-    )
+def _log_end(task_id: str, score: float, steps: int) -> None:
+    print(f"[END] task={task_id} score={score:.4f} steps={steps}", flush=True)
 
 
 def run_task(task_id: str) -> None:
@@ -230,9 +203,7 @@ def run_task(task_id: str) -> None:
 
     step_num = 0
     done = False
-    rewards: list[float] = []
-    success = False
-    last_error: str | None = None
+    score = 0.0
     obs: dict = {}
 
     try:
@@ -244,14 +215,13 @@ def run_task(task_id: str) -> None:
             )
             reset_resp.raise_for_status()
             obs = reset_resp.json()
-        except Exception as exc:
-            last_error = str(exc)
+        except Exception:
             done = True
 
         while not done and step_num < MAX_STEPS:
             action = get_action(obs, task_id, step_num + 1)
+            step_num += 1
             reward = 0.0
-            step_error: str | None = None
 
             try:
                 step_resp = req.post(
@@ -263,47 +233,33 @@ def run_task(task_id: str) -> None:
                 result = step_resp.json()
                 reward = float(result.get("reward", 0.0) or 0.0)
                 obs = result.get("observation", {})
-                done = bool(result.get("done", obs.get("done", False)))
-                err_field = obs.get("last_action_error") or obs.get("error_message")
-                step_error = str(err_field) if err_field else None
-            except Exception as exc:
+                done = bool(obs.get("done", result.get("done", False)))
+            except Exception:
                 done = True
-                step_error = str(exc)
-
-            step_num += 1
-            rewards.append(reward)
-            _log_step(step_num, _format_action(action), reward, done, step_error)
-            if step_error:
-                last_error = step_error
+            _log_step(step_num, reward)
 
         try:
             grader_resp = req.post(f"{ENV_BASE_URL}/grader", json={"task_id": task_id}, timeout=10)
+            grader_resp.raise_for_status()
             grader_result = grader_resp.json()
             score = float(grader_result.get("score", 0.0))
-            success = score > 0.0
         except Exception:
-            success = done and last_error is None
+            score = 0.0
 
     finally:
-        _log_end(success, step_num, rewards)
+        _log_end(task_id, score, step_num)
 
 
 if __name__ == "__main__":
-    main_completed = False
-    try:
-        wait_for_server(ENV_BASE_URL)
-        if TASK_ID and TASK_ID in TASKS:
-            tasks_to_run = [TASK_ID]
-        else:
-            tasks_to_run = TASKS
+    if TASK_ID and TASK_ID in TASKS:
+        tasks_to_run = [TASK_ID]
+    else:
+        tasks_to_run = TASKS
 
+    if wait_for_server(ENV_BASE_URL):
         for task in tasks_to_run:
-            try:
-                run_task(task)
-            except Exception:
-                # Ensure [END] is always emitted even for totally unexpected crashes
-                print("[END] success=false steps=0 rewards=0.00", flush=True)
-        main_completed = True
-    finally:
-        if not main_completed:
-            print("[END] success=false steps=0 rewards=0.00", flush=True)
+            run_task(task)
+    else:
+        for task in tasks_to_run:
+            _log_start(task)
+            _log_end(task, 0.0, 0)
