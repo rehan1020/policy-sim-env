@@ -7,14 +7,15 @@ from openai import OpenAI
 API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
 MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
 HF_TOKEN = os.getenv("HF_TOKEN")
+API_KEY = os.getenv("API_KEY") or HF_TOKEN
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 TASK_ID = os.getenv("TASK_ID")
 
-client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "hf_dummy_token")
+client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY or "hf_dummy_token")
 
 USE_LLM = (
-    bool(HF_TOKEN)
+    bool(API_KEY)
     and API_BASE_URL != "<your-active-endpoint>"
     and MODEL_NAME != "<your-active-model>"
 )
