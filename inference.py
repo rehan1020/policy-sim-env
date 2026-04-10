@@ -9,7 +9,6 @@ MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
 HF_TOKEN = os.getenv("HF_TOKEN")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
-MAX_STEPS = int(os.getenv("MAX_STEPS", "14"))
 TASK_ID = os.getenv("TASK_ID")
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN or "hf_dummy_token")
@@ -139,6 +138,18 @@ def _normalize_action(action: dict) -> dict:
     return {"action_type": "pass_turn"}
 
 
+def _to_unit_interval(value: float) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        return 0.0
+    if v < 0.0:
+        return 0.0
+    if v > 1.0:
+        return 1.0
+    return v
+
+
 def _llm_response_text(active_client: OpenAI, observation: dict) -> str:
     resp = active_client.chat.completions.create(
         model=MODEL_NAME,
@@ -191,11 +202,11 @@ def _log_start(task_id: str) -> None:
 
 
 def _log_step(step_num: int, reward_val: float) -> None:
-    print(f"[STEP] step={step_num} reward={reward_val:.4f}", flush=True)
+    print(f"[STEP] step={step_num} reward={_to_unit_interval(reward_val):.4f}", flush=True)
 
 
 def _log_end(task_id: str, score: float, steps: int) -> None:
-    print(f"[END] task={task_id} score={score:.4f} steps={steps}", flush=True)
+    print(f"[END] task={task_id} score={_to_unit_interval(score):.4f} steps={steps}", flush=True)
 
 
 def run_task(task_id: str) -> None:
@@ -218,7 +229,7 @@ def run_task(task_id: str) -> None:
         except Exception:
             done = True
 
-        while not done and step_num < MAX_STEPS:
+        while not done:
             action = get_action(obs, task_id, step_num + 1)
             step_num += 1
             reward = 0.0
