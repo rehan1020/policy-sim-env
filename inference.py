@@ -138,16 +138,12 @@ def _normalize_action(action: dict) -> dict:
     return {"action_type": "pass_turn"}
 
 
-def _to_unit_interval(value: float) -> float:
+def _to_binary(value: float, threshold: float = 0.0) -> int:
     try:
         v = float(value)
     except Exception:
-        return 0.0
-    if v < 0.0:
-        return 0.0
-    if v > 1.0:
-        return 1.0
-    return v
+        return 0
+    return 1 if v >= threshold else 0
 
 
 def _llm_response_text(active_client: OpenAI, observation: dict) -> str:
@@ -202,11 +198,11 @@ def _log_start(task_id: str) -> None:
 
 
 def _log_step(step_num: int, reward_val: float) -> None:
-    print(f"[STEP] step={step_num} reward={_to_unit_interval(reward_val):.4f}", flush=True)
+    print(f"[STEP] step={step_num} reward={_to_binary(reward_val)}", flush=True)
 
 
 def _log_end(task_id: str, score: float, steps: int) -> None:
-    print(f"[END] task={task_id} score={_to_unit_interval(score):.4f} steps={steps}", flush=True)
+    print(f"[END] task={task_id} score={_to_binary(score, threshold=0.7)} steps={steps}", flush=True)
 
 
 def run_task(task_id: str) -> None:
