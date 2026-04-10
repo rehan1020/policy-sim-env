@@ -13,6 +13,9 @@ Required extra endpoints:
   POST /grader      – score a city state externally
   POST /baseline    – run the rule-based baseline on all 3 tasks
   GET  /health      – liveness probe
+  GET  /metadata    – OpenEnv metadata contract
+  GET  /schema      – OpenEnv action/observation/state schemas
+  POST /mcp         – JSON-RPC compatibility surface
   GET  /            – interactive browser UI
 """
 from __future__ import annotations
@@ -80,6 +83,13 @@ class GraderRequest(BaseModel):
     task_id: str
     # Optionally pass a raw city state to score; if omitted grades current env state
     citywide_kpis: Optional[Dict[str, float]] = None
+
+
+class MCPRequest(BaseModel):
+    jsonrpc: str = "2.0"
+    id: Optional[Any] = None
+    method: str
+    params: Dict[str, Any] = {}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -309,11 +319,59 @@ def _run_rule_based_baseline():
 @app.get("/health")
 def health():
     return {
-        "status": "ok",
+    "status": "healthy",
         "env": "policy-sim-env",
         "version": "1.0.0",
         "tasks": list(TASKS.keys()),
     }
+
+
+@app.get("/metadata")
+def metadata():
+  return {
+    "name": "policy-sim-env",
+    "description": (
+      "OpenEnv-compatible municipal policy simulation where agents govern "
+      "Verdania under budget and political constraints."
+    ),
+    "version": "1.0.0",
+    "mode": "simulation",
+  }
+
+
+@app.get("/schema")
+def schema():
+  # Expose basic JSON schemas for interoperability tooling.
+  return {
+    "action": StepRequest.model_json_schema(),
+    "observation": CityObservation.model_json_schema(),
+    "state": EpisodeState.model_json_schema(),
+  }
+
+
+@app.post("/mcp")
+def mcp(req: MCPRequest):
+  if req.jsonrpc != "2.0":
+    return {
+      "jsonrpc": "2.0",
+      "id": req.id,
+      "error": {"code": -32600, "message": "Invalid Request"},
+    }
+
+  if req.method == "ping":
+    result = {"status": "ok"}
+  else:
+    result = {
+      "message": "MCP endpoint available",
+      "method": req.method,
+      "supported_methods": ["ping"],
+    }
+
+  return {
+    "jsonrpc": "2.0",
+    "id": req.id,
+    "result": result,
+  }
 
 
 @app.get("/", response_class=HTMLResponse)

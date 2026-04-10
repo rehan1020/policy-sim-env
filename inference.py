@@ -241,7 +241,7 @@ def _log_step(step_num: int, action_str: str, reward_val: float, done_val: bool,
 
 
 def _log_end(success: bool, steps: int, rewards: list[float]) -> None:
-    rewards_str = ",".join(f"{_clamp_unit(r):.2f}" for r in rewards)
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards) if rewards else "0.00"
     print(
         f"[END] success={str(bool(success)).lower()} steps={steps} rewards={rewards_str}",
         flush=True,
