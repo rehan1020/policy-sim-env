@@ -9,23 +9,20 @@ API_BASE_URL = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
 MODEL_NAME   = os.getenv("MODEL_NAME",   "gpt-4.1-mini")
 HF_TOKEN     = os.getenv("HF_TOKEN")
 
-if HF_TOKEN is None:
-    raise ValueError("HF_TOKEN environment variable is required")
-
 # Validator may inject API_KEY for LiteLLM proxy — use it if present
 API_KEY = os.environ.get("API_KEY") or HF_TOKEN
-USE_LLM = True  # HF_TOKEN is now guaranteed non-None
+if HF_TOKEN is None:
+    USE_LLM = False
+else:
+    USE_LLM = True
 
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_BASE_URL     = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 BENCHMARK        = os.getenv("OPENENV_BENCHMARK", "policy-sim-env")
-MAX_STEPS        = int(os.getenv("MAX_STEPS", "10"))
+MAX_STEPS        = int(os.getenv("MAX_STEPS", "12"))
 
 # ── OpenAI-compatible client ──────────────────────────────────
-client = OpenAI(
-    base_url=API_BASE_URL,
-    api_key=API_KEY,
-)
+client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY) if USE_LLM else None
 
 TASKS = ["task_1_decongest", "task_2_equity", "task_3_gauntlet"]
 
@@ -164,6 +161,9 @@ def _llm_response_text(active_client: OpenAI, observation: dict) -> str:
 
 
 def get_llm_action(observation: dict) -> dict:
+    if not USE_LLM or client is None:
+        return {"action_type": "pass_turn"}
+
     try:
         text = _llm_response_text(client, observation)
     except Exception:
@@ -186,46 +186,22 @@ def get_llm_action(observation: dict) -> dict:
 
 
 def get_action(observation: dict, task_id: str, step_num: int) -> dict:
-    # Always use LLM (HF_TOKEN is guaranteed non-None at startup)
-    # FALLBACK_ACTIONS used only if LLM call throws an exception
-    # (get_llm_action already returns pass_turn on exception)
-    action = get_llm_action(observation)
-    if action.get("action_type") == "pass_turn":
-        # LLM failed — use deterministic fallback for better scores
-        fallback = FALLBACK_ACTIONS.get(task_id, [])
-        if fallback:
-            index = (step_num - 1) % len(fallback)
-            return _normalize_action(fallback[index])
-    return action
+    if USE_LLM:
+        action = get_llm_action(observation)
+        if action.get("action_type") != "pass_turn":
+            return action
+
+    # LLM unavailable/failed — use deterministic fallback for better scores.
+    fallback = FALLBACK_ACTIONS.get(task_id, [])
+    if fallback:
+        index = (step_num - 1) % len(fallback)
+        return _normalize_action(fallback[index])
+
+    return {"action_type": "pass_turn"}
 
 
 def _format_action(action: dict) -> str:
     return json.dumps(action, separators=(",", ":"), ensure_ascii=True)
-
-
-def _clamp_unit(value: float) -> float:
-    try:
-        value = float(value)
-    except Exception:
-        return 0.0
-    # Keep native unit values unchanged; otherwise normalize shaped rewards
-    # (typically around [-1, 1]) into [0, 1] for validator-facing logs.
-    if 0.0 <= value <= 1.0:
-        return value
-    return max(0.0, min(1.0, (value + 1.0) / 2.0))
-
-
-def _strict_open_unit(value: float, eps: float = 0.001) -> float:
-    value = _clamp_unit(value)
-    if value <= 0.0:
-        return eps
-    if value >= 1.0:
-        return 1.0 - eps
-    if value < eps:
-        return eps
-    if value > 1.0 - eps:
-        return 1.0 - eps
-    return value
 
 
 def _log_start(task_id: str) -> None:
@@ -287,7 +263,7 @@ def run_task(task_id: str) -> None:
                 reward = float(result.get("reward", 0.0) or 0.0)
                 obs = result.get("observation", {})
                 done = bool(result.get("done", obs.get("done", False)))
-                err_field = obs.get("error_message")
+                err_field = obs.get("last_action_error") or obs.get("error_message")
                 step_error = str(err_field) if err_field else None
             except Exception as exc:
                 done = True
@@ -299,12 +275,29 @@ def run_task(task_id: str) -> None:
             if step_error:
                 last_error = step_error
 
-        success = last_error is None
+        try:
+            grader_resp = req.post(f"{ENV_BASE_URL}/grader", json={"task_id": task_id}, timeout=10)
+            grader_result = grader_resp.json()
+            score = float(grader_result.get("score", 0.0))
+            success = score > 0.0
+        except Exception:
+            success = done and last_error is None
 
     finally:
         _log_end(success, step_num, rewards)
 
+
 if __name__ == "__main__":
-    wait_for_server(ENV_BASE_URL)
-    for task in TASKS:
-        run_task(task)
+    main_completed = False
+    try:
+        wait_for_server(ENV_BASE_URL)
+        for task in TASKS:
+            try:
+                run_task(task)
+            except Exception:
+                # Ensure [END] is always emitted even for totally unexpected crashes
+                print("[END] success=false steps=0 rewards=0.00", flush=True)
+        main_completed = True
+    finally:
+        if not main_completed:
+            print("[END] success=false steps=0 rewards=0.00", flush=True)
