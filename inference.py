@@ -8,16 +8,16 @@ API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
 MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
 HF_TOKEN = os.getenv("HF_TOKEN")
 API_KEY = os.getenv("API_KEY") or HF_TOKEN
+LLM_KEY = os.getenv("API_KEY", HF_TOKEN)
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 TASK_ID = os.getenv("TASK_ID")
 
-client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY or "hf_dummy_token")
+client = OpenAI(base_url=API_BASE_URL, api_key=LLM_KEY or "hf_dummy_token")
 
 USE_LLM = (
-    bool(API_KEY)
+    bool(LLM_KEY)
     and API_BASE_URL != "<your-active-endpoint>"
-    and MODEL_NAME != "<your-active-model>"
 )
 
 TASKS = ["task_1_decongest", "task_2_equity", "task_3_gauntlet"]
@@ -180,6 +180,10 @@ def get_llm_action(observation: dict) -> dict:
 
 
 def get_action(observation: dict, task_id: str, step_num: int) -> dict:
+    # Validator path: when API_KEY is injected, always attempt LLM calls.
+    if os.getenv("API_KEY"):
+        return get_llm_action(observation)
+
     if USE_LLM:
         action = get_llm_action(observation)
         if action.get("action_type") != "pass_turn":
