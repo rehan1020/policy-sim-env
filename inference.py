@@ -147,6 +147,18 @@ def _to_binary(value: float, threshold: float = 0.0) -> int:
     return 1 if v >= threshold else 0
 
 
+def _to_strict_open_score(value: float, eps: float = 0.001) -> float:
+    try:
+        v = float(value)
+    except Exception:
+        return eps
+    if v <= 0.0:
+        return eps
+    if v >= 1.0:
+        return 1.0 - eps
+    return v
+
+
 def _llm_response_text(active_client: OpenAI, observation: dict) -> str:
     resp = active_client.chat.completions.create(
         model=MODEL_NAME,
@@ -207,7 +219,7 @@ def _log_step(step_num: int, reward_val: float) -> None:
 
 
 def _log_end(task_id: str, score: float, steps: int) -> None:
-    print(f"[END] task={task_id} score={_to_binary(score, threshold=0.7)} steps={steps}", flush=True)
+    print(f"[END] task={task_id} score={_to_strict_open_score(score):.4f} steps={steps}", flush=True)
 
 
 def run_task(task_id: str) -> None:
