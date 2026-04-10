@@ -19,7 +19,8 @@ else:
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 ENV_BASE_URL     = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 BENCHMARK        = os.getenv("OPENENV_BENCHMARK", "policy-sim-env")
-MAX_STEPS        = int(os.getenv("MAX_STEPS", "12"))
+MAX_STEPS        = int(os.getenv("MAX_STEPS", "14"))
+TASK_ID          = os.getenv("TASK_ID")
 
 # ── OpenAI-compatible client ──────────────────────────────────
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY) if USE_LLM else None
@@ -291,7 +292,12 @@ if __name__ == "__main__":
     main_completed = False
     try:
         wait_for_server(ENV_BASE_URL)
-        for task in TASKS:
+        if TASK_ID and TASK_ID in TASKS:
+            tasks_to_run = [TASK_ID]
+        else:
+            tasks_to_run = TASKS
+
+        for task in tasks_to_run:
             try:
                 run_task(task)
             except Exception:
